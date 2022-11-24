@@ -1,0 +1,26 @@
+// Uses V3.0 of the Protocol Buffer Specification
+syntax = "proto3";
+
+message Request {				// Request message
+	int32 version = 1;		// This protocol version number
+	int32 seq_n = 2;			// Sequence number
+
+	//	enum Signin {
+	//		username = 0;
+	//	}
+
+	enum Type {						// Define Request types
+		LIST = 0;
+		SIGNIN = 1;
+		BYE = 2;
+	}
+
+	Type type = 3;				// Type of this specific message
+	string payload = 4;		// A string payload
+}
+
+message Reply {
+	int32 version = 1;		// This protocol version number
+	int32 seq_n = 2;			// Sequence number
+	string payload = 3;		// The reply payload
+}
