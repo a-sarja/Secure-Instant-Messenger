@@ -2,25 +2,32 @@
 syntax = "proto3";
 
 message Request {				// Request message
+
 	int32 version = 1;		// This protocol version number
 	int32 seq_n = 2;			// Sequence number
-
-	//	enum Signin {
-	//		username = 0;
-	//	}
 
 	enum Type {						// Define Request types
 		LIST = 0;
 		SIGNIN = 1;
-		BYE = 2;
+		SEND = 2;
+		BYE = 3;
 	}
 
 	Type type = 3;				// Type of this specific message
 	string payload = 4;		// A string payload
+	int64 dh_component = 5;		// Optional payload (For example: g^a MOD p)
+	string challenge = 6;		// Optional payload (For example: C1)
+	string nonce = 7;		// Optional payload
 }
 
 message Reply {
 	int32 version = 1;		// This protocol version number
 	int32 seq_n = 2;			// Sequence number
+
 	string payload = 3;		// The reply payload
+
+	int64 dh_component = 4;		// Optional payload (For example: g^a MOD p)
+	bytes u_number = 5;		// Optional payload (For example: u)
+	string challenge = 6;		// Optional payload (For example: C1)
+	string nonce = 7;		// Optional payload
 }

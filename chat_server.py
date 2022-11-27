@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
 
 import argparse
+import os
+import random
 import socket
+import traceback
+
+import config.config
 import pb_team11_pb2
 from multiprocessing import Process, Manager
 
 __author__ = 'Abhiram Sarja'
+
+from dh_utils import calculate_dh_component
 
 
 class team11_server:
@@ -42,6 +49,9 @@ class team11_server:
 
     def process_connection(self, conn, source, online_clients):
 
+        # Server's DH component `b`
+        b = random.randint(0, 10)
+
         while True:
 
             try:
@@ -67,11 +77,21 @@ class team11_server:
                         online_clients=online_clients
                     )
 
-                    self.reply.payload = "Successfully signed in! Welcome to Network Security (in collaboration with the Team AUS) Chat Room!\n\n " \
+                    self.reply.payload = "Welcome to Network Security (in collaboration with the Team AUS) Chat Room! " \
+                                         "(Successfully signed in!)\n\n " \
                                          "Type `list` to get all the online clients and `bye` to leave the chat room!"
 
+                    self.reply.dh_component = pow(9, b) + calculate_dh_component(g=9, p=23, power=config.config.secure_storage[self.request.payload])
+                    self.reply.u_number = os.urandom(32)
+                    # temp = os.urandom(32)
+                    # self.reply.u_number = int.from_bytes(temp, byteorder='little')
+
                 if self.request.type == pb_team11_pb2.Request.LIST:
-                    self.reply.payload = str(online_clients)
+                    self.reply.payload = str(online_clients.keys())
+
+                if self.request.type == pb_team11_pb2.Request.SEND:
+                    destination_client = self.request.payload
+                    self.reply.payload = str(online_clients[destination_client])
 
                 if self.request.type == pb_team11_pb2.Request.BYE:
                     conn.close()
@@ -80,6 +100,7 @@ class team11_server:
                 conn.send(self.reply.SerializeToString())  # serialize response into string, send it & wait for the next message from the client
 
             except Exception as e:
+                traceback.print_exception(e)
                 print('[Server Exception]', str(e))
                 del online_clients[self.request.payload]    # Remove the user from the list of online clients
                 break
