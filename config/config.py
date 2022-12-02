@@ -1,8 +1,8 @@
-# Clients' (g^W MOD p) goes here
+# Clients' (g^W MOD p) should go here, but we are storing the password directly for now
 
 secure_storage = {
-    'abhiram': '9',         # g0AusT11!
-    'sarja': '18',          # g0ComputerSecurity!
-    'simran': '4',          # g0Huskies!
-    'sohal': '8'            # g0NetworkSecurity!
+    'abhiram': 'g0AusT11!',
+    'sarja': 'g0Huskies!',
+    'simran': 'g0NScy6740!'
+    # Add usernames here along with passwords
 }

@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 import argparse
-import random
+from ast import literal_eval
 
 import pb_team11_pb2
 import socket
 import select
 import sys
+import srp
 
 __author__ = 'Abhiram Sarja'
-
-from dh_utils import calculate_dh_component, calculate_key
 
 
 # Read the user console input while listening to the non-blocked socket - with 0.5 seconds interval
@@ -32,19 +31,19 @@ class team11_client:
         self.password = password
         self.BUFFER_SIZE = 4096
         self.client_socket = None
-        self.signin_status = False                  # Sign-in status is False by default
-        self.request = pb_team11_pb2.Request()      # Protobuf Request message
-        self.reply = pb_team11_pb2.Reply()          # Protobuf Reply message
-        self._dh_a = random.randint(0, 10)          # Generate client's DH component `a` (between 0 and 10)
+        self.signin_status = False  # Sign-in status is False by default
+        self.request = pb_team11_pb2.Request()  # Protobuf Request message
+        self.reply = pb_team11_pb2.Reply()  # Protobuf Reply message
 
     def initialise_client_socket(self):
         client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         client_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         client_socket.setblocking(False)
         client_socket.settimeout(2)
-        self.client_socket = client_socket      # Assign this socket to client socket
+        self.client_socket = client_socket  # Assign this socket to client socket
 
     def send_message(self):
+        self.request.version = 7
         return self.client_socket.send(
             self.request.SerializeToString()
         )  # serialize message to string & send it the server
@@ -52,48 +51,79 @@ class team11_client:
     def receive_message(self):
         incoming_message = self.client_socket.recv(self.BUFFER_SIZE)
         if incoming_message:
-            return self.reply.ParseFromString(incoming_message)        # parse response message
+            return self.reply.ParseFromString(incoming_message)  # parse response message
 
-    # auto-execute signin command upon client start
-    def client_signin(self, seq_n):
+    def create_srp_user(self):
+        return srp.User(self.username, self.password)
 
-        self.request.version = 7
+    # auto-execute signin operation upon client start
+    def client_signin(self, seq_n, srp_user):
+
+        # Generate the SRP uname, A on client side
+        uname, A = srp_user.start_authentication()
+        # First three calls between the server & client are for SRP authentication
         self.request.seq_n = seq_n  # set sequence number
         self.request.type = pb_team11_pb2.Request.SIGNIN
-        self.request.payload = self.username
-        self.request.dh_component = calculate_dh_component(g=9, p=23, power=self._dh_a)   # Calculate ( g^a MOD p )
+        self.request.payload = str((uname, A))
+
         self.send_message()
-
+        # Server initial response
         self.receive_message()
-        if self.reply.dh_component and self.reply.u_number:
-            secret_key = calculate_key(a=self._dh_a, partner_component=self.reply.dh_component, g=9, p=23, u=self.reply.u_number, w=self.password)
-            print('SECRET KEY: ' + secret_key)
-            self.signin_status = True
+        s, B = literal_eval(self.reply.payload)
+        if not s or not B:
+            print('Authentication failed')
+            exit(1)
 
-        return
+        M = srp_user.process_challenge(s, B)
+        if not M:
+            print('Authentication failed (2)')
+            exit(2)
+
+        seq_n += 1
+        self.request.seq_n = seq_n  # set sequence number
+        self.request.type = pb_team11_pb2.Request.SIGNIN
+        self.request.payload = M.decode('latin-1')
+
+        self.send_message()
+        # final server response during authentication phase
+        self.receive_message()
+        HAMK = self.reply.payload.encode('latin-1')
+
+        srp_user.verify_session(HAMK)       # Verify the server response and generate the session key if successful
+        if srp_user.authenticated():
+            self.signin_status = True
+            key = srp_user.get_session_key()  # Use this key for encrypting further communication between the client and the server
+            return seq_n
+
+        else:
+            print(f'Authentication failed (4): {HAMK.decode("utf-8")}')
+            exit(4)
 
     def client_processing(self):
-        # Initialise the client before doing anything
-        self.initialise_client_socket()
 
+        # Create SRP user using user credentials
+        srp_user = self.create_srp_user()
+
+        self.initialise_client_socket()  # Initialise the client before doing anything
         self.client_socket.connect((self.server_host, self.server_port))  # connect to server
-        # self.request.version = 7
+        self.request.version = 7
 
-        request_number = 0      # Initialise the sequence number to 0
+        request_number = 0  # Initialise the sequence number to 0
 
-        # Auto signin
-        self.client_signin(seq_n=request_number)
+        # Signin/Authentication
+        new_seq_n = self.client_signin(seq_n=request_number, srp_user=srp_user)
         if not self.signin_status:
+            print('Authentication failed!\n')
             return
 
-        request_number += 1
+        print("Welcome to Network Security Chat Room - in collaboration with the Team AUS! "
+              "Type `list` to get all the online clients and `bye` to leave the chat room!\n")
 
+        request_number = new_seq_n + 1
         while True:
             exit_flag = False
             try:
-                incoming_message = self.receive_message()
-                # self.reply.ParseFromString(incoming_message)        # parse response message
-
+                self.receive_message()
                 print("Received data > (", self.reply.version, self.reply.seq_n, ") ", self.reply.payload)
 
             except socket.error:
@@ -118,7 +148,7 @@ class team11_client:
 
                     self.request.seq_n = request_number  # set sequence number
                     self.send_message()
-                    request_number += 1     # Increment the sequence number
+                    request_number += 1  # Increment the sequence number
 
                     if exit_flag:
                         raise Exception('Client wants to leave the chat room!')

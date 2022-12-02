@@ -1,18 +1,25 @@
 #!/usr/bin/env python3
 
 import argparse
-import os
-import random
 import socket
-import traceback
-
-import config.config
+# import traceback
+from ast import literal_eval
+from utils.srp_utils import create_srp_salt_vkey
 import pb_team11_pb2
 from multiprocessing import Process, Manager
+import srp
 
 __author__ = 'Abhiram Sarja'
 
-from dh_utils import calculate_dh_component
+
+class AuthenticationFailed(Exception):
+    pass
+
+
+# Adding username to the available-clients list
+def add_user_to_clients_list(username, address_information, online_clients):
+    complete_url = str(address_information[0]) + ":" + str(address_information[1])
+    online_clients[username] = complete_url
 
 
 class team11_server:
@@ -24,34 +31,27 @@ class team11_server:
         self.server_socket = None
         self.BUFFER_SIZE = 4096
         self.request = pb_team11_pb2.Request()  # create protobuf Request message
-        self.reply = pb_team11_pb2.Reply()      # create protobuf Reply message
+        self.reply = pb_team11_pb2.Reply()  # create protobuf Reply message
 
     # Initialise the server socket as UDP
     def initialise_server_socket(self):
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.server_socket.bind((self.host, self.port))     # Bind to the port
+        self.server_socket.bind((self.host, self.port))  # Bind to the port
         self.server_socket.listen()
 
         print("Server Initialized.. Server is left running..")
 
         while True:
             conn, address = self.server_socket.accept()
-            print(f'New connection from ', str(address))
+            print(f'New connection request from {address}')
 
             if address:
                 connection_proc = Process(target=self.process_connection, args=(conn, address, self.online_clients))
                 connection_proc.start()
 
-    # Adding username to the available-clients list
-    def add_user_to_clients_list(self, username, address_information, online_clients):
-        complete_url = str(address_information[0]) + ":" + str(address_information[1])
-        online_clients[username] = complete_url
-
     def process_connection(self, conn, source, online_clients):
 
-        # Server's DH component `b`
-        b = random.randint(0, 10)
-
+        global uname
         while True:
 
             try:
@@ -59,10 +59,8 @@ class team11_server:
                 if not data:
                     continue
 
-                print("Received data...")
-
                 self.request.ParseFromString(data)  # parse message
-                print(self.request.version, self.request.seq_n)
+                print(f"Received data -> version : {self.request.version}, sequence : {self.request.seq_n}")
                 if self.request.version != 7:  # only accept version 7
                     continue
 
@@ -71,20 +69,35 @@ class team11_server:
                 self.reply.seq_n = self.request.seq_n
 
                 if self.request.type == pb_team11_pb2.Request.SIGNIN:  # Log-in request
-                    self.add_user_to_clients_list(
-                        username=self.request.payload,
-                        address_information=source,
-                        online_clients=online_clients
-                    )
+                    # Before adding the user to the clients_list, verify using SRP
+                    if self.request.seq_n == 0:  # (uname, A) from client
 
-                    self.reply.payload = "Welcome to Network Security (in collaboration with the Team AUS) Chat Room! " \
-                                         "(Successfully signed in!)\n\n " \
-                                         "Type `list` to get all the online clients and `bye` to leave the chat room!"
+                        uname, A = literal_eval(self.request.payload)
+                        srp_salt, srp_vkey = create_srp_salt_vkey(user_name=uname)
+                        svr = srp.Verifier(uname, srp_salt, srp_vkey, A)
+                        s, B = svr.get_challenge()      # While A is client challenge, B is server challenge
+                        if not s or not B:
+                            self.reply.payload = '-1000'
+                            raise AuthenticationFailed('-1000')
 
-                    self.reply.dh_component = pow(9, b) + calculate_dh_component(g=9, p=23, power=config.config.secure_storage[self.request.payload])
-                    self.reply.u_number = os.urandom(32)
-                    # temp = os.urandom(32)
-                    # self.reply.u_number = int.from_bytes(temp, byteorder='little')
+                        self.reply.payload = str((s, B))
+
+                    if self.request.seq_n == 1:  # Client side challenge M is incoming
+
+                        HAMK = svr.verify_session(bytes(self.request.payload, 'latin-1'))
+                        if not HAMK:
+                            self.reply.payload = '-1001'
+                            raise AuthenticationFailed('-1001')
+
+                        self.reply.payload = HAMK.decode('latin-1')
+                        if svr.authenticated():
+                            print(f'User {uname} authenticated successfully and a session key is created..\n')
+                            key = svr.get_session_key()     # Use this key for encrypting further communication between the client and the server
+                            add_user_to_clients_list(
+                                username=uname,
+                                address_information=source,
+                                online_clients=online_clients
+                            )
 
                 if self.request.type == pb_team11_pb2.Request.LIST:
                     self.reply.payload = str(online_clients.keys())
@@ -95,21 +108,28 @@ class team11_server:
 
                 if self.request.type == pb_team11_pb2.Request.BYE:
                     conn.close()
-                    raise Exception('Client wants to leave the chat room!')
+                    raise Exception(f'Client {uname} left the chat room!')
 
-                conn.send(self.reply.SerializeToString())  # serialize response into string, send it & wait for the next message from the client
+                conn.send(
+                    self.reply.SerializeToString())  # serialize response into string, send it & wait for the next message from the client
+
+            except AuthenticationFailed as auth_exception:
+                conn.send(self.reply.SerializeToString())
+                print('[Authentication Error]', str(auth_exception))
+                break
 
             except Exception as e:
-                traceback.print_exception(e)
+                # traceback.print_exception(e)
                 print('[Server Exception]', str(e))
-                del online_clients[self.request.payload]    # Remove the user from the list of online clients
+                del online_clients[uname]  # Remove the user from the list of online clients
                 break
 
 
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-sp", "--serverport", type=int, default=9090, required=True, help="Server's Port number is missing.")
+    parser.add_argument("-sp", "--serverport", type=int, default=9090, required=True,
+                        help="Server's Port number is missing.")
     args = parser.parse_args()
 
     # Reading values from the arguments
@@ -117,10 +137,10 @@ if __name__ == '__main__':
 
     # Maintaining shared information on clients
     manager = Manager()
-    online_clients = manager.dict()
+    clients = manager.dict()
 
     try:
-        server = team11_server(server_host="0.0.0.0", server_port=s_port, online_clients=online_clients)
+        server = team11_server(server_host="0.0.0.0", server_port=s_port, online_clients=clients)
         server.initialise_server_socket()
 
     except Exception as ex:
