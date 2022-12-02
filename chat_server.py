@@ -2,7 +2,7 @@
 
 import argparse
 import socket
-# import traceback
+import traceback
 from ast import literal_eval
 from utils.srp_utils import create_srp_salt_vkey
 import pb_team11_pb2
@@ -51,7 +51,7 @@ class team11_server:
 
     def process_connection(self, conn, source, online_clients):
 
-        global uname
+        global uname, svr
         while True:
 
             try:
@@ -73,8 +73,8 @@ class team11_server:
                     if self.request.seq_n == 0:  # (uname, A) from client
 
                         uname, A = literal_eval(self.request.payload)
-                        srp_salt, srp_vkey = create_srp_salt_vkey(user_name=uname)
-                        svr = srp.Verifier(uname, srp_salt, srp_vkey, A)
+                        srp_salt, srp_v_key = create_srp_salt_vkey(user_name=uname)
+                        svr = srp.Verifier(uname, srp_salt, srp_v_key, A)
                         s, B = svr.get_challenge()      # While A is client challenge, B is server challenge
                         if not s or not B:
                             self.reply.payload = '-1000'
@@ -84,15 +84,16 @@ class team11_server:
 
                     if self.request.seq_n == 1:  # Client side challenge M is incoming
 
-                        HAMK = svr.verify_session(bytes(self.request.payload, 'latin-1'))
-                        if not HAMK:
+                        H_AMK = svr.verify_session(bytes(self.request.payload, 'latin-1'))
+                        if not H_AMK:
                             self.reply.payload = '-1001'
                             raise AuthenticationFailed('-1001')
 
-                        self.reply.payload = HAMK.decode('latin-1')
+                        self.reply.payload = H_AMK.decode('latin-1')
                         if svr.authenticated():
                             print(f'User {uname} authenticated successfully and a session key is created..\n')
                             key = svr.get_session_key()     # Use this key for encrypting further communication between the client and the server
+                            print(key)  # Should remove this print statement later and use it for encryption/decryption
                             add_user_to_clients_list(
                                 username=uname,
                                 address_information=source,
@@ -119,7 +120,7 @@ class team11_server:
                 break
 
             except Exception as e:
-                # traceback.print_exception(e)
+                traceback.print_exception(e)
                 print('[Server Exception]', str(e))
                 del online_clients[uname]  # Remove the user from the list of online clients
                 break

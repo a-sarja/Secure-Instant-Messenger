@@ -87,16 +87,17 @@ class team11_client:
         self.send_message()
         # final server response during authentication phase
         self.receive_message()
-        HAMK = self.reply.payload.encode('latin-1')
+        H_AMK = self.reply.payload.encode('latin-1')
 
-        srp_user.verify_session(HAMK)       # Verify the server response and generate the session key if successful
+        srp_user.verify_session(H_AMK)       # Verify the server response and generate the session key if successful
         if srp_user.authenticated():
             self.signin_status = True
             key = srp_user.get_session_key()  # Use this key for encrypting further communication between the client and the server
+            print(key)  # Should remove this print statement later and use it for encryption/decryption
             return seq_n
 
         else:
-            print(f'Authentication failed (4): {HAMK.decode("utf-8")}')
+            print(f'Authentication failed (4): {H_AMK.decode("utf-8")}')
             exit(4)
 
     def client_processing(self):
