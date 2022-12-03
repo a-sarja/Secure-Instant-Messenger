@@ -34,9 +34,9 @@ class team11_client:
         self.password = password
         self.BUFFER_SIZE = 4096
         self.client_socket = None
-        self.signin_status = False  # Sign-in status is False by default
+        self.signin_status = False              # Sign-in status is False by default
         self.request = pb_team11_pb2.Request()  # Protobuf Request message
-        self.reply = pb_team11_pb2.Reply()  # Protobuf Reply message
+        self.reply = pb_team11_pb2.Reply()      # Protobuf Reply message
         self.server_client_session_key = None
 
     def initialise_client_socket(self):
@@ -93,7 +93,6 @@ class team11_client:
         srp_user.verify_session(H_AMK)       # Verify the server response and generate the session key if successful
         if srp_user.authenticated():
             self.signin_status = True
-            # key = srp_user.get_session_key()  # Use this key for encrypting further communication between the client and the server
             self.server_client_session_key = srp_user.get_session_key()
 
             return seq_n
@@ -155,7 +154,7 @@ class team11_client:
                         self.request.type = pb_team11_pb2.Request.BYE
                         self.request.payload = self.username
                         exit_flag = True
-                    elif user_input.strip().lower().startswith('send'):
+                    elif user_input.strip().lower().startswith('send'):         # send K{source, target, Nonce} to server to get target's IP and port
                         self.request.type = pb_team11_pb2.Request.SEND
                         target_client_username = user_input.strip().split(" ")[1]
 
@@ -163,8 +162,7 @@ class team11_client:
                         iv, ciphertext, tag = encrypt_server_to_client(self.server_client_session_key, target_client_username)
                         self.request.initial_vector = iv
                         self.request.e_tag = tag
-                        self.request.payload = ciphertext.decode('latin1')
-                        # self.request.payload = target_client_username
+                        self.request.payload = ciphertext.decode('latin-1')
                     else:
                         print('Unknown command..')
                         continue
