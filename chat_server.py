@@ -4,12 +4,13 @@ import argparse
 import socket
 import traceback
 from ast import literal_eval
-from utils.srp_utils import create_srp_salt_vkey
+from utils.srp_utils import create_srp_salt_vkey, srp_verifier
 import pb_team11_pb2
 from multiprocessing import Process, Manager
-import srp
+from utils.crypto_utils import encrypt_server_to_client, decrypt_client_to_server
 
-__author__ = 'Abhiram Sarja'
+
+__author__ = 'Abhiram Sarja, Simran Sohal'
 
 
 class AuthenticationFailed(Exception):
@@ -51,7 +52,7 @@ class team11_server:
 
     def process_connection(self, conn, source, online_clients):
 
-        global uname, svr
+        global uname, svr, server_client_s_key
         while True:
 
             try:
@@ -74,7 +75,8 @@ class team11_server:
 
                         uname, A = literal_eval(self.request.payload)
                         srp_salt, srp_v_key = create_srp_salt_vkey(user_name=uname)
-                        svr = srp.Verifier(uname, srp_salt, srp_v_key, A)
+                        svr = srp_verifier(uname, srp_salt, srp_v_key, A)       # SRP verifier
+
                         s, B = svr.get_challenge()      # While A is client challenge, B is server challenge
                         if not s or not B:
                             self.reply.payload = '-1000'
@@ -92,8 +94,8 @@ class team11_server:
                         self.reply.payload = H_AMK.decode('latin-1')
                         if svr.authenticated():
                             print(f'User {uname} authenticated successfully and a session key is created..\n')
-                            key = svr.get_session_key()     # Use this key for encrypting further communication between the client and the server
-                            print(key)  # Should remove this print statement later and use it for encryption/decryption
+
+                            server_client_s_key = svr.get_session_key()     # Use this key for encrypting further communication between the client and the server
                             add_user_to_clients_list(
                                 username=uname,
                                 address_information=source,
@@ -101,18 +103,41 @@ class team11_server:
                             )
 
                 if self.request.type == pb_team11_pb2.Request.LIST:
-                    self.reply.payload = str(online_clients.keys())
+
+                    plaintext_payload = str(online_clients.keys())
+                    # Encrypt before sending
+                    iv, ciphertext, tag = encrypt_server_to_client(server_client_s_key, plaintext_payload)
+                    self.reply.initial_vector = iv
+                    self.reply.e_tag = tag
+                    self.reply.payload = ciphertext.decode('latin1')
 
                 if self.request.type == pb_team11_pb2.Request.SEND:
+
+                    # Decrypt the received message using session-key
+                    self.request.payload = decrypt_client_to_server(
+                        key=server_client_s_key,
+                        iv=self.request.initial_vector,
+                        tag=self.request.e_tag,
+                        ciphertext=bytes(self.request.payload, 'latin-1')
+                    )
+
                     destination_client = self.request.payload
-                    self.reply.payload = str(online_clients[destination_client])
+                    if destination_client in online_clients:
+                        plaintext_payload = str(online_clients[destination_client])
+                    else:
+                        plaintext_payload = 'Client not found!'
+
+                    # Encrypt before sending
+                    iv, ciphertext, tag = encrypt_server_to_client(server_client_s_key, plaintext_payload)
+                    self.reply.initial_vector = iv
+                    self.reply.e_tag = tag
+                    self.reply.payload = ciphertext.decode('latin-1')
 
                 if self.request.type == pb_team11_pb2.Request.BYE:
                     conn.close()
                     raise Exception(f'Client {uname} left the chat room!')
 
-                conn.send(
-                    self.reply.SerializeToString())  # serialize response into string, send it & wait for the next message from the client
+                conn.send(self.reply.SerializeToString())  # serialize response into string, send it & wait for the next message from the client
 
             except AuthenticationFailed as auth_exception:
                 conn.send(self.reply.SerializeToString())
@@ -120,7 +145,7 @@ class team11_server:
                 break
 
             except Exception as e:
-                traceback.print_exception(e)
+                # traceback.print_exception(e)
                 print('[Server Exception]', str(e))
                 del online_clients[uname]  # Remove the user from the list of online clients
                 break

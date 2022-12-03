@@ -16,11 +16,19 @@ message Request {				// Request message
 	Type type = 3;				// Type of this specific message
 	string payload = 4;		// A string payload
 	string nonce = 5;			// Optional payload
+
+	bytes initial_vector = 6;		// (Optional) initialization vector
+	bytes e_tag = 7;				// (Optional) encryption tag
 }
 
 message Reply {
+
 	int32 version = 1;		// This protocol version number
 	int32 seq_n = 2;			// Sequence number
 	string payload = 3;		// The reply payload
-	string nonce = 4;			// Optional payload
+	string nonce = 4;			// Optional nonce
+
+	bytes initial_vector = 5;		// (Optional) initialization vector
+	bytes e_tag = 6;				// (Optional) encryption tag
+
 }

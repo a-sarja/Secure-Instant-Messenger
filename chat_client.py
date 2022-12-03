@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 import argparse
+import traceback
 from ast import literal_eval
 
 import pb_team11_pb2
 import socket
 import select
 import sys
-import srp
 
 __author__ = 'Abhiram Sarja'
+
+from utils.crypto_utils import decrypt_client_to_server, encrypt_server_to_client
+from utils.srp_utils import create_srp_user
 
 
 # Read the user console input while listening to the non-blocked socket - with 0.5 seconds interval
@@ -34,6 +37,7 @@ class team11_client:
         self.signin_status = False  # Sign-in status is False by default
         self.request = pb_team11_pb2.Request()  # Protobuf Request message
         self.reply = pb_team11_pb2.Reply()  # Protobuf Reply message
+        self.server_client_session_key = None
 
     def initialise_client_socket(self):
         client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -53,9 +57,6 @@ class team11_client:
         if incoming_message:
             return self.reply.ParseFromString(incoming_message)  # parse response message
 
-    def create_srp_user(self):
-        return srp.User(self.username, self.password)
-
     # auto-execute signin operation upon client start
     def client_signin(self, seq_n, srp_user):
 
@@ -71,10 +72,10 @@ class team11_client:
         self.receive_message()
         s, B = literal_eval(self.reply.payload)
         if not s or not B:
-            print('Authentication failed')
+            print('Authentication failed (1)')
             exit(1)
 
-        M = srp_user.process_challenge(s, B)
+        M = srp_user.process_challenge(bytes_s=s, bytes_B=B)
         if not M:
             print('Authentication failed (2)')
             exit(2)
@@ -92,8 +93,9 @@ class team11_client:
         srp_user.verify_session(H_AMK)       # Verify the server response and generate the session key if successful
         if srp_user.authenticated():
             self.signin_status = True
-            key = srp_user.get_session_key()  # Use this key for encrypting further communication between the client and the server
-            print(key)  # Should remove this print statement later and use it for encryption/decryption
+            # key = srp_user.get_session_key()  # Use this key for encrypting further communication between the client and the server
+            self.server_client_session_key = srp_user.get_session_key()
+
             return seq_n
 
         else:
@@ -103,7 +105,7 @@ class team11_client:
     def client_processing(self):
 
         # Create SRP user using user credentials
-        srp_user = self.create_srp_user()
+        srp_user = create_srp_user(username=self.username, password=self.password)
 
         self.initialise_client_socket()  # Initialise the client before doing anything
         self.client_socket.connect((self.server_host, self.server_port))  # connect to server
@@ -113,11 +115,11 @@ class team11_client:
 
         # Signin/Authentication
         new_seq_n = self.client_signin(seq_n=request_number, srp_user=srp_user)
-        if not self.signin_status:
+        if not self.signin_status or not self.server_client_session_key:
             print('Authentication failed!\n')
-            return
+            exit(5)
 
-        print("Welcome to Network Security Chat Room - in collaboration with the Team AUS! "
+        print("\nWelcome to Network Security Chat Room - in collaboration with the Team AUS! \n\n"
               "Type `list` to get all the online clients and `bye` to leave the chat room!\n")
 
         request_number = new_seq_n + 1
@@ -125,10 +127,24 @@ class team11_client:
             exit_flag = False
             try:
                 self.receive_message()
+
+                # Decrypt the received message using session-key
+                self.reply.payload = decrypt_client_to_server(
+                    key=self.server_client_session_key,
+                    iv=self.reply.initial_vector,
+                    tag=self.reply.e_tag,
+                    ciphertext=bytes(self.reply.payload, 'latin-1')
+                )
+
                 print("Received data > (", self.reply.version, self.reply.seq_n, ") ", self.reply.payload)
 
             except socket.error:
                 pass
+
+            except Exception as ex:
+                traceback.print_exception(ex)
+                print('[Client Exception]', str(ex))
+                exit(6)
 
             user_input = read_input()
             if user_input:
@@ -142,7 +158,13 @@ class team11_client:
                     elif user_input.strip().lower().startswith('send'):
                         self.request.type = pb_team11_pb2.Request.SEND
                         target_client_username = user_input.strip().split(" ")[1]
-                        self.request.payload = target_client_username
+
+                        # Encrypt the payload before sending
+                        iv, ciphertext, tag = encrypt_server_to_client(self.server_client_session_key, target_client_username)
+                        self.request.initial_vector = iv
+                        self.request.e_tag = tag
+                        self.request.payload = ciphertext.decode('latin1')
+                        # self.request.payload = target_client_username
                     else:
                         print('Unknown command..')
                         continue
