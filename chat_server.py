@@ -5,7 +5,7 @@ import base64
 import socket
 import traceback
 from ast import literal_eval
-from utils.srp_utils import create_srp_salt_vkey, srp_verifier
+from utils.srp_utils import srp_verifier, get_srp_salt_vkey
 import pb_team11_pb2
 from multiprocessing import Process, Manager
 from utils.crypto_utils import encrypt_server_to_client, decrypt_client_to_server, generate_symmetric_keys
@@ -82,7 +82,7 @@ class team11_server:
                     if self.request.seq_n == 0:  # (uname, A) from client
 
                         uname, A = literal_eval(self.request.payload)
-                        srp_salt, srp_v_key = create_srp_salt_vkey(user_name=uname)
+                        srp_salt, srp_v_key = get_srp_salt_vkey(user_name=uname)
                         svr = srp_verifier(uname, srp_salt, srp_v_key, A)       # SRP verifier
 
                         s, B = svr.get_challenge()      # While A is client challenge, B is server challenge

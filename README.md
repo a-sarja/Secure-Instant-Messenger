@@ -34,6 +34,26 @@
     ```
      ./chat_client.py -sip <SERVER_IP> -sp <SERVER_PORT> -u <CLLIENT_USERNAME>
     ```
+### User Sign Up
+
+ * Generate `SRP salt` and `SRP verification key`s for a user using the below command
+
+   ```
+      ./srp_credentials_creator.py -u <username> -p <password>
+   ```
+   
+ * Once the above program runs successfully, copy the generated credentials into `config/config.py` **entirely**
+
+   ````
+      secure_storage = {
+         'username' : (SRP_salt, SRP_vkey)
+      }
+   ````
+   * **Example:**
+
+     ![Adding User Credentials](Docs/configuration.png)
+
+ * `Restart` the server and clients
 
 ### Commands available for the client
 
