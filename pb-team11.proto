@@ -1,28 +1,22 @@
 // Uses V3.0 of the Protocol Buffer Specification
 syntax = "proto3";
 
-message Ticket {
-	string source = 1;
-	string secret_key = 2;
-	string nonce = 3;
-}
+message Request {							// Request message
 
-message Request {				// Request message
+	int32 version = 1;					// Protocol version number
+	int32 seq_n = 2;						// Sequence number
 
-	int32 version = 1;		// This protocol version number
-	int32 seq_n = 2;			// Sequence number
-
-	enum Type {						// Define Request types
+	enum Type {									// Define Request types
 		LIST = 0;
 		SIGNIN = 1;
 		SEND = 2;
 		BYE = 3;
 	}
 
-	Type type = 3;				// Type of this specific message
-	string payload = 4;		// A string payload
+	Type type = 3;							// Type of this specific message
+	string payload = 4;					// A string payload
 	bytes initial_vector = 5;		// (Optional) initialization vector
-	bytes e_tag = 6;				// (Optional) encryption tag
+	bytes e_tag = 6;						// (Optional) encryption tag
 
 }
 
@@ -42,13 +36,13 @@ message Message {								// Client-to-client message structure (UDP)
 	int32 version = 1;
 	int32 seq_n = 2;
 	string payload = 3;
-	//	string nonce = 4;
 	string ticket = 4;
 	string initial_vector = 5;
 	string e_tag = 6;
 
 	string server_iv = 7;
 	string server_e_tag = 8;
+	string source_uname = 9;
 }
 
 message SendCommand {

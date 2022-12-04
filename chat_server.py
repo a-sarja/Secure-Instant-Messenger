@@ -49,12 +49,11 @@ class team11_server:
         self.server_socket.bind((self.host, self.port))  # Bind to the port
         self.server_socket.listen()
 
-        print("Server Initialized.. Server is left running..")
+        print("Server Initialized.. Server is up & running..")
 
         while True:
             conn, address = self.server_socket.accept()
             print(f'New connection request from {address}')
-
             if address:
                 connection_proc = Process(target=self.process_connection, args=(conn, address, self.online_clients))
                 connection_proc.start()
@@ -137,9 +136,8 @@ class team11_server:
                     '''
                         TODO: verify the request source with the source have in the config may be?
                     '''
-
+                    self.send_command_response.nonce = nonce  # Respond nonce (Nx) back to client
                     if destination_client in online_clients:
-                        # plaintext_payload = str(online_clients[destination_client])
                         client_to_client_key = generate_symmetric_keys()
 
                         # Generate a ticket here (this can be decrypted only by the receiver, not the requester!)
@@ -150,18 +148,21 @@ class team11_server:
                             nonce=nonce
                         )
 
-                        self.send_command_response.nonce = nonce    # Respond nonce (Nx) back to client
                         self.send_command_response.destination = str(online_clients[destination_client])
                         self.send_command_response.secret_key = base64.b64encode(client_to_client_key).decode('latin-1')     # 256 bits symmetric key to be used between the clients
 
                         # Send ticket as well (ticket in reply, IV and TAG in command response)
                         self.reply.ticket_to_client = base64.b64encode(ticket_to_receiver).decode('latin-1')
-
                         self.send_command_response.initial_vector = base64.b64encode(iv).decode('latin-1')
                         self.send_command_response.e_tag = base64.b64encode(tag).decode('latin-1')
-                        # self.send_command_response.ticket = base64.b64encode(ticket_to_receiver).decode('latin-1')
                         self.send_command_response.error_code = 0
                     else:
+                        # Dummy data
+                        self.send_command_response.destination = str(online_clients)
+                        self.send_command_response.secret_key = base64.b64encode(bytes(nonce, 'latin-1')).decode('latin-1')
+                        self.send_command_response.initial_vector = base64.b64encode(bytes(nonce, 'latin-1')).decode('latin-1')
+                        self.send_command_response.e_tag = base64.b64encode(bytes(nonce, 'latin-1')).decode('latin-1')
+
                         self.send_command_response.error_code = 100
 
                     # Encrypt before sending
@@ -182,7 +183,7 @@ class team11_server:
                 break
 
             except Exception as e:
-                traceback.print_exception(e)
+                # traceback.print_exception(e)
                 print('[Server Exception]', str(e))
                 del online_clients[uname]  # Remove the user from the list of online clients
                 break
