@@ -1,6 +1,12 @@
 // Uses V3.0 of the Protocol Buffer Specification
 syntax = "proto3";
 
+message Ticket {
+	string source = 1;
+	string secret_key = 2;
+	string nonce = 3;
+}
+
 message Request {				// Request message
 
 	int32 version = 1;		// This protocol version number
@@ -15,20 +21,50 @@ message Request {				// Request message
 
 	Type type = 3;				// Type of this specific message
 	string payload = 4;		// A string payload
-	string nonce = 5;			// Optional payload
+	bytes initial_vector = 5;		// (Optional) initialization vector
+	bytes e_tag = 6;				// (Optional) encryption tag
 
-	bytes initial_vector = 6;		// (Optional) initialization vector
-	bytes e_tag = 7;				// (Optional) encryption tag
 }
 
 message Reply {
 
-	int32 version = 1;		// This protocol version number
-	int32 seq_n = 2;			// Sequence number
-	string payload = 3;		// The reply payload
-	string nonce = 4;			// Optional nonce
+	int32 version = 1;						// This protocol version number
+	int32 seq_n = 2;							// Sequence number
+	string payload = 3;						// The reply payload
+	bytes initial_vector = 4;			// (Optional) initialization vector
+	bytes e_tag = 5;							// (Optional) encryption tag
+	string ticket_to_client = 6;
 
-	bytes initial_vector = 5;		// (Optional) initialization vector
-	bytes e_tag = 6;				// (Optional) encryption tag
+}
 
+message Message {								// Client-to-client message structure (UDP)
+
+	int32 version = 1;
+	int32 seq_n = 2;
+	string payload = 3;
+	//	string nonce = 4;
+	string ticket = 4;
+	string initial_vector = 5;
+	string e_tag = 6;
+
+	string server_iv = 7;
+	string server_e_tag = 8;
+}
+
+message SendCommand {
+
+	string source = 1;
+	string destination = 2;
+	string nonce = 3;
+
+}
+
+message SendCommandResponse {
+
+	string nonce = 1;
+	string destination = 2;
+	string secret_key = 3;
+	string initial_vector = 4;		// (Optional) initialization vector
+	string e_tag = 5;							// (Optional) encryption tag
+	int32 error_code = 6;
 }

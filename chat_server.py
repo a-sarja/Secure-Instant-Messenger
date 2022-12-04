@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 
 import argparse
+import base64
 import socket
 import traceback
 from ast import literal_eval
 from utils.srp_utils import create_srp_salt_vkey, srp_verifier
 import pb_team11_pb2
 from multiprocessing import Process, Manager
-from utils.crypto_utils import encrypt_server_to_client, decrypt_client_to_server
-
+from utils.crypto_utils import encrypt_server_to_client, decrypt_client_to_server, generate_symmetric_keys
 
 __author__ = 'Abhiram Sarja, Simran Sohal'
 
@@ -23,20 +23,29 @@ def add_user_to_clients_list(username, address_information, online_clients):
     online_clients[username] = complete_url
 
 
+# Add the generated secret key : Can be a secure database table in the future
+def add_secret_keys_list(username, session_key, secret_keys):
+    secret_keys[username] = session_key
+
+
 class team11_server:
 
-    def __init__(self, server_host, server_port, online_clients):
+    def __init__(self, server_host, server_port, online_clients, secret_keys):
         self.host = server_host
         self.port = server_port
         self.online_clients = online_clients
+        self.secret_keys = secret_keys          # Dict of keys for every user maintained by the server, accessible to all the threads
         self.server_socket = None
-        self.BUFFER_SIZE = 4096
+        self.BUFFER_SIZE = 65536
         self.request = pb_team11_pb2.Request()  # create protobuf Request message
         self.reply = pb_team11_pb2.Reply()  # create protobuf Reply message
+        self.send_command = pb_team11_pb2.SendCommand()
+        self.send_command_response = pb_team11_pb2.SendCommandResponse()
 
     # Initialise the server socket as UDP
     def initialise_server_socket(self):
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server_socket.bind((self.host, self.port))  # Bind to the port
         self.server_socket.listen()
 
@@ -96,11 +105,10 @@ class team11_server:
                             print(f'User {uname} authenticated successfully and a session key is created..\n')
 
                             server_client_s_key = svr.get_session_key()     # Use this key for encrypting further communication between the client and the server
-                            add_user_to_clients_list(
-                                username=uname,
-                                address_information=source,
-                                online_clients=online_clients
-                            )
+
+                            # Add username to the list of online clients, and session key to the confidential `secret_keys`
+                            add_user_to_clients_list(username=uname, address_information=source, online_clients=online_clients)
+                            add_secret_keys_list(username=uname, session_key=server_client_s_key, secret_keys=secret_keys)
 
                 if self.request.type == pb_team11_pb2.Request.LIST:
 
@@ -121,14 +129,43 @@ class team11_server:
                         ciphertext=bytes(self.request.payload, 'latin-1')
                     )
 
-                    destination_client = self.request.payload
+                    self.send_command.ParseFromString(bytes(self.request.payload, 'latin-1'))
+
+                    request_source = self.send_command.source
+                    destination_client = self.send_command.destination
+                    nonce = self.send_command.nonce
+                    '''
+                        TODO: verify the request source with the source have in the config may be?
+                    '''
+
                     if destination_client in online_clients:
-                        plaintext_payload = str(online_clients[destination_client])
+                        # plaintext_payload = str(online_clients[destination_client])
+                        client_to_client_key = generate_symmetric_keys()
+
+                        # Generate a ticket here (this can be decrypted only by the receiver, not the requester!)
+                        iv, ticket_to_receiver, tag = generate_ticket(
+                            symmetric_key=client_to_client_key,
+                            source_of_requester=request_source,
+                            receiver=destination_client,
+                            nonce=nonce
+                        )
+
+                        self.send_command_response.nonce = nonce    # Respond nonce (Nx) back to client
+                        self.send_command_response.destination = str(online_clients[destination_client])
+                        self.send_command_response.secret_key = base64.b64encode(client_to_client_key).decode('latin-1')     # 256 bits symmetric key to be used between the clients
+
+                        # Send ticket as well (ticket in reply, IV and TAG in command response)
+                        self.reply.ticket_to_client = base64.b64encode(ticket_to_receiver).decode('latin-1')
+
+                        self.send_command_response.initial_vector = base64.b64encode(iv).decode('latin-1')
+                        self.send_command_response.e_tag = base64.b64encode(tag).decode('latin-1')
+                        # self.send_command_response.ticket = base64.b64encode(ticket_to_receiver).decode('latin-1')
+                        self.send_command_response.error_code = 0
                     else:
-                        plaintext_payload = 'Client not found!'
+                        self.send_command_response.error_code = 100
 
                     # Encrypt before sending
-                    iv, ciphertext, tag = encrypt_server_to_client(server_client_s_key, plaintext_payload)
+                    iv, ciphertext, tag = encrypt_server_to_client(server_client_s_key, self.send_command_response.SerializeToString())
                     self.reply.initial_vector = iv
                     self.reply.e_tag = tag
                     self.reply.payload = ciphertext.decode('latin-1')
@@ -145,10 +182,27 @@ class team11_server:
                 break
 
             except Exception as e:
-                # traceback.print_exception(e)
+                traceback.print_exception(e)
                 print('[Server Exception]', str(e))
                 del online_clients[uname]  # Remove the user from the list of online clients
                 break
+
+
+def generate_ticket(symmetric_key, source_of_requester, receiver, nonce):
+
+    if receiver in secret_keys:
+
+        session_key_receiver = secret_keys[receiver]
+        ticket_object = {
+            'source': source_of_requester,
+            'secret_key': base64.b64encode(symmetric_key).decode('latin-1'),
+            'nonce': nonce
+        }
+
+        return encrypt_server_to_client(
+            key=session_key_receiver,
+            plaintext=str(ticket_object)
+        )
 
 
 if __name__ == '__main__':
@@ -163,10 +217,11 @@ if __name__ == '__main__':
 
     # Maintaining shared information on clients
     manager = Manager()
-    clients = manager.dict()
+    clients = manager.dict()        # Dynamically updated list by various `client` threads
+    secret_keys = manager.dict()    # To be forgotten after TTL
 
     try:
-        server = team11_server(server_host="0.0.0.0", server_port=s_port, online_clients=clients)
+        server = team11_server(server_host="0.0.0.0", server_port=s_port, online_clients=clients, secret_keys=secret_keys)
         server.initialise_server_socket()
 
     except Exception as ex:

@@ -1,4 +1,6 @@
 import os
+import time
+import traceback
 
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding
@@ -19,9 +21,11 @@ def get_unpadded_data(content, size=256):
 def encrypt_server_to_client(key, plaintext):
 
     # Generate a random 16 bytes long IV
-    iv = os.urandom(16)
+    iv = generate_iv()
+    if not isinstance(plaintext, bytes):
+        plaintext = bytes(plaintext, 'utf-8')
 
-    plaintext = get_padded_data(content=bytes(plaintext, 'utf-8'))
+    plaintext = get_padded_data(content=plaintext)
 
     # Construct an AES-GCM Cipher object with SRP Key and IV
     cipher = Cipher(
@@ -53,3 +57,17 @@ def decrypt_client_to_server(key, iv, ciphertext, tag):
     # Decrypt the ciphertext and get the associated plaintext and then un-pad it
     decrypted_text = decryptor.update(ciphertext) + decryptor.finalize()
     return get_unpadded_data(content=decrypted_text)
+
+
+
+def generate_iv():
+    return os.urandom(16)
+
+
+def generate_symmetric_keys():      # 32 bytes ~ 256 bits keys for encrypting the communication between the clients
+    return os.urandom(16)
+
+
+def generate_timestamp():
+    """Get seconds since epoch (UTC)."""
+    return str(int(time.time()))

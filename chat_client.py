@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import argparse
+import ast
+import base64
 import traceback
 from ast import literal_eval
 
@@ -10,7 +12,7 @@ import sys
 
 __author__ = 'Abhiram Sarja'
 
-from utils.crypto_utils import decrypt_client_to_server, encrypt_server_to_client
+from utils.crypto_utils import decrypt_client_to_server, encrypt_server_to_client, generate_timestamp
 from utils.srp_utils import create_srp_user
 
 
@@ -32,12 +34,20 @@ class team11_client:
         self.server_port = server_port
         self.username = username
         self.password = password
-        self.BUFFER_SIZE = 4096
+        self.BUFFER_SIZE = 65536
         self.client_socket = None
+        self.my_socket = None                   # UDP socket to keep listening to incoming messages (from other clients)
         self.signin_status = False              # Sign-in status is False by default
+
         self.request = pb_team11_pb2.Request()  # Protobuf Request message
         self.reply = pb_team11_pb2.Reply()      # Protobuf Reply message
+        self.message = pb_team11_pb2.Message()  # Protobuf Client-to-Client message
+        # self.message_response = pb_team11_pb2.MessageResponse()
+        self.send_command = pb_team11_pb2.SendCommand()
+        self.send_command_response = pb_team11_pb2.SendCommandResponse()
+
         self.server_client_session_key = None
+        self.clients_connection_secret_keys = {}           # Store the secret_keys for a client after mutual auth
 
     def initialise_client_socket(self):
         client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -45,6 +55,21 @@ class team11_client:
         client_socket.setblocking(False)
         client_socket.settimeout(2)
         self.client_socket = client_socket  # Assign this socket to client socket
+
+    # Initialise the client UDP socket for incoming messages from other clients
+    def initialise_client_udp_socket(self, my_ip, udp_port):
+        self.my_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.my_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.my_socket.setblocking(False)
+        self.my_socket.bind((my_ip, udp_port))
+
+    def send_udp_message(self, target):
+        self.my_socket.sendto(self.message.SerializeToString(), target)
+
+    def receive_udp_message(self):
+        incoming_udp_message = self.my_socket.recvfrom(self.BUFFER_SIZE)
+        if incoming_udp_message:
+            return self.message.ParseFromString(incoming_udp_message[0]), incoming_udp_message[1]
 
     def send_message(self):
         self.request.version = 7
@@ -94,7 +119,6 @@ class team11_client:
         if srp_user.authenticated():
             self.signin_status = True
             self.server_client_session_key = srp_user.get_session_key()
-
             return seq_n
 
         else:
@@ -121,7 +145,17 @@ class team11_client:
         print("\nWelcome to Network Security Chat Room - in collaboration with the Team AUS! \n\n"
               "Type `list` to get all the online clients and `bye` to leave the chat room!\n")
 
+        my_host_address = self.client_socket.getsockname()
+        my_ip = my_host_address[0]
+        my_port = my_host_address[1]
+        print('MY INFO : ', my_ip, my_port)
+
+        # After successful sign-in, create a UDP socket as well to listen to the incoming messages (from other clients)
+        self.initialise_client_udp_socket(my_ip=my_ip, udp_port=my_port)
+
         request_number = new_seq_n + 1
+        send_flag = False
+        message = None
         while True:
             exit_flag = False
             try:
@@ -135,46 +169,164 @@ class team11_client:
                     ciphertext=bytes(self.reply.payload, 'latin-1')
                 )
 
-                print("Received data > (", self.reply.version, self.reply.seq_n, ") ", self.reply.payload)
+                if not send_flag:
+                    print("FROM server > (", self.reply.version, self.reply.seq_n, ") ", self.reply.payload)
+
+                if send_flag:
+                    self.send_command_response.ParseFromString(bytes(self.reply.payload, 'latin-1'))
+                    if int(self.send_command_response.error_code) == 0:
+
+                        # send the message to the client
+                        temp = self.send_command_response.destination
+                        secret_key = base64.b64decode(bytes(self.send_command_response.secret_key, 'latin-1'))
+
+                        self.clients_connection_secret_keys[self.send_command.destination] = secret_key
+
+                        ticket_to_client = base64.b64decode(bytes(self.reply.ticket_to_client, 'latin-1'))
+                        i_v = base64.b64decode(bytes(self.send_command_response.initial_vector, 'latin-1'))
+                        e_tag = base64.b64decode(bytes(self.send_command_response.e_tag, 'latin-1'))
+
+                        self.message.seq_n = 0
+                        self.message.version = 7
+                        self.message.server_iv = i_v.decode('latin-1')
+                        self.message.server_e_tag = e_tag.decode('latin-1')
+                        self.message.ticket = ticket_to_client.decode('latin-1')
+
+                        nonce_2 = generate_timestamp()
+                        iv, ciphertext, etag = encrypt_server_to_client(key=secret_key, plaintext=nonce_2)     # Nonce-2
+
+                        self.message.initial_vector = iv.decode('latin-1')
+                        self.message.e_tag = etag.decode('latin-1')
+                        self.message.payload = ciphertext.decode('latin-1')
+
+                        target_node = (temp.split(":")[0], int(temp.split(":")[1]))
+                        self.send_udp_message(target=target_node)
+
+                        # send_flag = False
 
             except socket.error:
                 pass
 
             except Exception as ex:
-                traceback.print_exception(ex)
-                print('[Client Exception]', str(ex))
+                traceback.print_exc()
+                print('[Client Error Exception]', str(ex))
                 exit(6)
+
+            # Read UDP data (Most probably from other clients)
+            try:
+                m, source_of_request_udp = self.receive_udp_message()
+                if self.message.seq_n == 0:
+                    print('Received initial connection request!')
+                    ticket = bytes(self.message.ticket, 'latin-1')
+                    iv = bytes(self.message.server_iv, 'latin-1')
+                    etag = bytes(self.message.server_e_tag, 'latin-1')
+
+                    # Decrypt the ticket using my session key to get the secret key
+                    ticket_dict = decrypt_client_to_server(key=self.server_client_session_key, iv=iv, ciphertext=ticket, tag=etag)
+                    if ticket_dict:
+                        ticket_dict = ast.literal_eval(ticket_dict.decode('latin-1'))
+                        s = ticket_dict['secret_key']
+                        secret_key = base64.b64decode(bytes(s, 'latin-1'))
+                        if not secret_key:
+                            print('Error in processing the secret key. Let us ignore the request')
+                            return
+
+                        self.clients_connection_secret_keys[self.send_command.destination] = secret_key
+                        nonce_2 = decrypt_client_to_server(
+                            key=secret_key,
+                            iv=bytes(self.message.initial_vector, 'latin-1'),
+                            ciphertext=bytes(self.message.payload, 'latin-1'),
+                            tag=bytes(self.message.e_tag, 'latin-1')
+                        )
+                        # print(str(nonce_2))
+                        # Encrypt (Nonce_2-1)
+                        iv, ciphertext, tag = encrypt_server_to_client(key=secret_key, plaintext=str(int(nonce_2)-1))
+                        self.message.seq_n = 1
+                        self.message.payload = ciphertext.decode('latin-1')
+                        self.message.initial_vector = iv.decode('latin-1')
+                        self.message.e_tag = tag.decode('latin-1')
+
+                        self.send_udp_message(target=source_of_request_udp)
+
+                if int(self.message.seq_n) == 1:
+
+                    secret_key = self.clients_connection_secret_keys[self.send_command.destination]
+                    nonce_3 = decrypt_client_to_server(key=secret_key, iv=bytes(self.message.initial_vector, 'latin-1'), ciphertext=bytes(self.message.payload, 'latin-1'), tag=bytes(self.message.e_tag, 'latin-1'))
+                    if int(nonce_3) != int(nonce_2) - 1:
+                        print('Error in client-client mutual authentication')
+                        return
+
+                    print('Clients are mutually authenticated!', source_of_request_udp)
+                    iv, ciphertext, tag = encrypt_server_to_client(key=secret_key, plaintext=str(message))
+                    self.message.seq_n += self.message.seq_n
+                    self.message.payload = ciphertext.decode('latin-1')
+                    self.message.initial_vector = iv.decode('latin-1')
+                    self.message.e_tag = tag.decode('latin-1')
+
+                    self.send_udp_message(target=source_of_request_udp)
+
+            except socket.error:
+                pass
+
+            except Exception as ex:
+                traceback.print_exc()
+                print('[Client UDP Exception]', str(ex))
+                exit(7)
 
             user_input = read_input()
             if user_input:
                 try:
                     if user_input.strip().lower() == 'list':
                         self.request.type = pb_team11_pb2.Request.LIST
+
                     elif user_input.strip().lower() == 'bye':
                         self.request.type = pb_team11_pb2.Request.BYE
                         self.request.payload = self.username
                         exit_flag = True
-                    elif user_input.strip().lower().startswith('send'):         # send K{source, target, Nonce} to server to get target's IP and port
-                        self.request.type = pb_team11_pb2.Request.SEND
-                        target_client_username = user_input.strip().split(" ")[1]
 
-                        # Encrypt the payload before sending
-                        iv, ciphertext, tag = encrypt_server_to_client(self.server_client_session_key, target_client_username)
-                        self.request.initial_vector = iv
-                        self.request.e_tag = tag
-                        self.request.payload = ciphertext.decode('latin-1')
+                    elif user_input.strip().lower().startswith('send') and len(user_input.strip().split(" ")) > 2:
+
+                        # send 'SEND' command to server to get target's IP and port
+                        target_client_username = user_input.strip().split(" ")[1]
+                        message = user_input.strip().split(" ")[2]
+
+                        self.send_command.source = srp_user.get_username()
+                        self.send_command.destination = target_client_username
+                        self.send_command.nonce = generate_timestamp()
+
+                        if self.send_command.destination not in self.clients_connection_secret_keys:
+
+                            # Encrypt 'send_command' object before sending: K{'I am A', 'Want to talk to destination', Nx}
+                            iv, ciphertext, tag = encrypt_server_to_client(
+                                self.server_client_session_key,
+                                self.send_command.SerializeToString()
+                            )
+
+                            # Request structure: SEND, iv, e_tag, ciphered_payload
+                            self.request.type = pb_team11_pb2.Request.SEND
+                            self.request.initial_vector = iv
+                            self.request.e_tag = tag
+                            self.request.payload = ciphertext.decode('latin-1')
+
+                        else:
+                            ''' TODO '''
+                            print('Encrypt the message using the Kab and send!')
+
+                        send_flag = True
+
                     else:
                         print('Unknown command..')
                         continue
 
-                    self.request.seq_n = request_number  # set sequence number
+                    self.request.seq_n = request_number     # set sequence number
                     self.send_message()
-                    request_number += 1  # Increment the sequence number
 
+                    request_number += 1                     # Increment the sequence number
                     if exit_flag:
                         raise Exception('Client wants to leave the chat room!')
 
                 except Exception as ex:
+                    traceback.print_exc()
                     print('Some internal error - ' + str(ex))
                     self.client_socket.close()
                     break
@@ -191,6 +343,7 @@ if __name__ == "__main__":
                         help="Server IP is required. Please reach out to system admin if you do not know the Server IP Address.")
     parser.add_argument("-sp", "--serverport", type=int, required=True, default=5050,
                         help="Server's Port number is missing.")
+
     args = parser.parse_args()
 
     # Reading values from the arguments
