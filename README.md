@@ -14,9 +14,14 @@
    
  * Compile the _.proto_ file
     ```
-     protoc --python_out=. pb-team11.proto
+       protoc --python_out=. pb-team11.proto
     ```
 
+ * Install all the dependencies
+
+   ```commandline
+      pip install -r requirements.txt
+   ```
  * Provide `Execute` option to the files
    ```
       chmod 764 chat_server.py
@@ -34,6 +39,7 @@
     ```
      ./chat_client.py -sip <SERVER_IP> -sp <SERVER_PORT> -u <CLLIENT_USERNAME>
     ```
+ 
 ### User Sign Up
 
  * Generate `SRP salt` and `SRP verification key`s for a user using the below command
