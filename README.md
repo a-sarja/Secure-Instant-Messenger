@@ -42,9 +42,9 @@
 
 ### User Credentials
 
- * Username: abhiram	Password: g0husk1e5!
- * Usernae: sarja	Password: g0aus11!
- * Username: simran	Password: g0MScY!	
+ * Username: abhiram |	Password: g0husk1e5!
+ * Username: sarja | Password: g0aus11!
+ * Username: simran | Password: g0MScY!	
  
 ### User Sign Up
 
