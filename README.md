@@ -39,8 +39,19 @@
     ```
      ./chat_client.py -sip <SERVER_IP> -sp <SERVER_PORT> -u <CLLIENT_USERNAME>
     ```
+
+### User Credentials
+
+ * Username: abhiram	Password: g0husk1e5!
+ * Usernae: sarja	Password: g0aus11!
+ * Username: simran	Password: g0MScY!	
  
 ### User Sign Up
+
+ * Provide `Execute` option to the srp_credentials_creator.py file
+   ```
+      chmod 764 srp_credentials_creator.py
+   ```
 
  * Generate `SRP salt` and `SRP verification key`s for a user using the below command
 

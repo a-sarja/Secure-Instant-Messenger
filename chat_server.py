@@ -226,4 +226,4 @@ if __name__ == '__main__':
         server.initialise_server_socket()
 
     except Exception as ex:
-        print('Some internal error: ' + str(ex))
+        print('Some Internal error: ' + str(ex))

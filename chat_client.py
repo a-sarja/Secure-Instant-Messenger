@@ -227,7 +227,7 @@ class team11_client:
                     print('FROM ', source, '> ', plaintext_client_message.decode('latin-1'))
 
                 elif self.message.seq_n == 0:
-                    print('[DEBUG] Received initial connection request from a client!')
+                    #print('[DEBUG] Received initial connection request from a client!')
 
                     ticket = bytes(self.message.ticket, 'latin-1')
                     iv = bytes(self.message.server_iv, 'latin-1')
@@ -271,7 +271,7 @@ class team11_client:
                         print('Error in client-client mutual authentication')
                         return
 
-                    print('[DEBUG] Clients are mutually authenticated!', source_of_request_udp)
+                    #print('[DEBUG] Clients are mutually authenticated!', source_of_request_udp)
 
                     # Send the first actual message
                     # print('[DEBUG] UDP SQN NUMBER', self.message.seq_n)
@@ -363,11 +363,11 @@ class team11_client:
 
                     request_number += 1                     # Increment the sequence number
                     if exit_flag:
-                        raise Exception('Client wants to leave the chat room!')
+                        raise Exception('Client has left the chat room!')
 
                 except Exception as ex:
                     # traceback.print_exc()
-                    print('Some internal error - ' + str(ex))
+                    print('Client Message - ' + str(ex))
                     self.client_socket.close()
                     break
 
